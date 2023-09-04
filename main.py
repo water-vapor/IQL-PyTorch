@@ -4,12 +4,50 @@ import gym
 import d4rl
 import numpy as np
 import torch
+from torch import nn
 from tqdm import trange
 
 from src.iql import ImplicitQLearning
 from src.policy import GaussianPolicy, DeterministicPolicy
 from src.value_functions import TwinQ, ValueFunction
 from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+
+class FittedFunction(nn.Module):
+    def __init__(self, fn, range_min, range_max, clamp=False):
+        super().__init__()
+        self.fn = fn
+        self.range_min = range_min
+        self.range_max = range_max
+        self.clamp = clamp
+
+    def forward(self, x):
+        if self.clamp:
+            x = torch.clamp(x, self.range_min, self.range_max)
+        return self.fn(x)
+    
+class FittedExponentialActivationg2TTT(FittedFunction):
+    def __init__(self, clamp=False):
+        def fn(x):
+            return 0.880456*torch.exp(-7.31405*x+0.499283)-1.45059
+        super().__init__(fn, -0.6, 0.0, clamp=clamp)
+
+class ReLULikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+    def __init__(self, clamp=False):
+        super().__init__()
+        self.clamp = clamp
+        self.act = FittedExponentialActivationg2TTT(clamp=clamp)
+
+    def forward(self, x):
+        return 1/60*(self.act(-0.1*x)+1.45059)
+
+class TanhLikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+    def __init__(self, clamp=False):
+        super().__init__()
+        self.clamp = clamp
+        self.act = FittedExponentialActivationg2TTT(clamp=clamp)
+
+    def forward(self, x):
+        return torch.sign(x)*(-1/60*self.act(torch.abs(x)-0.5) + 0.9125612803489692)
 
 
 def get_env_and_dataset(log, env_name, max_episode_steps):
@@ -32,7 +70,7 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
 
 def main(args):
     torch.set_num_threads(1)
-    log = Log(Path(args.log_dir)/args.env_name, vars(args))
+    log = Log(Path(args.log_dir)/f'{args.env_name}_{args.act}', vars(args))
     log(f'Log dir: {log.dir}')
 
     env, dataset = get_env_and_dataset(log, args.env_name, args.max_episode_steps)
@@ -40,10 +78,21 @@ def main(args):
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
     set_seed(args.seed, env=env)
 
-    if args.deterministic_policy:
-        policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+    if args.act == 'relu':
+        act = torch.nn.ReLU
+    elif args.act == 'tanh':
+        act = torch.nn.Tanh
+    elif args.act == 'fittedrelu':
+        act = ReLULikeRescaledFittedExponentialActivationg2TTT
+    elif args.act == 'fittedtanh':
+        act = TanhLikeRescaledFittedExponentialActivationg2TTT
     else:
-        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+        raise NotImplementedError
+
+    if args.deterministic_policy:
+        policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden, act=act)
+    else:
+        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden, act=act)
     def eval_policy():
         eval_returns = np.array([evaluate_policy(env, policy, args.max_episode_steps) \
                                  for _ in range(args.n_eval_episodes)])
@@ -95,4 +144,5 @@ if __name__ == '__main__':
     parser.add_argument('--eval-period', type=int, default=5000)
     parser.add_argument('--n-eval-episodes', type=int, default=10)
     parser.add_argument('--max-episode-steps', type=int, default=1000)
+    parser.add_argument('--act', type=str, default='relu')
     main(parser.parse_args())
