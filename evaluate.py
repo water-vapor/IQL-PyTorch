@@ -1,7 +1,3 @@
-import os
-os.environ['LD_LIBRARY_PATH'] = ':/home/vapor/miniconda3/lib/:/home/vapor/.mujoco/mujoco210/bin:/usr/lib/nvidia:/usr/lib/nvidia'
-from pathlib import Path
-
 import gym
 import d4rl
 import numpy as np
@@ -12,8 +8,7 @@ import argparse
 from src.iql import ImplicitQLearning
 from src.policy import GaussianPolicy, DeterministicPolicy
 from src.value_functions import TwinQ, ValueFunction
-from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
-from main import ReLULikeRescaledFittedExponentialActivationg2TTT, TanhLikeRescaledFittedExponentialActivationg2TTT
+from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy, ReLULikeRescaledFittedExponentialActivationg2TTT, TanhLikeRescaledFittedExponentialActivationg2TTT, get_obs_converter
 
 def main(args):
     if args.act == 'relu':
@@ -26,6 +21,11 @@ def main(args):
         act = TanhLikeRescaledFittedExponentialActivationg2TTT
     else:
         raise NotImplementedError
+    
+    if args.polar:
+        obs_converter = get_obs_converter(args.env)
+    else:
+        obs_converter = None
     
     env_name = args.env
     pt_path = args.ckpt
@@ -41,6 +41,8 @@ def main(args):
         dataset[k] = torchify(v)
 
     obs_dim = dataset['observations'].shape[1]
+    if args.polar:
+        obs_dim += 1
     act_dim = dataset['actions'].shape[1]
     print(f'obs_dim: {obs_dim}, act_dim: {act_dim}')
 
@@ -48,15 +50,11 @@ def main(args):
     policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=256, n_hidden=2, act=act)
 
     def eval_policy(n_steps=1000, n_episodes=100):
-        eval_returns = np.array([evaluate_policy(env, policy, n_steps) \
+        eval_returns = np.array([evaluate_policy(env, policy, n_steps, obs_converter=obs_converter) \
                                     for _ in range(n_episodes)])
         normalized_returns = d4rl.get_normalized_score(env_name, eval_returns) * 100.0
-        print({
-            'return mean': eval_returns.mean(),
-            'return std': eval_returns.std(),
-            'normalized return mean': normalized_returns.mean(),
-            'normalized return std': normalized_returns.std(),
-        })
+        print(f'mean: {normalized_returns.mean()}, std: {normalized_returns.std()}')
+        return normalized_returns.mean(), normalized_returns.std()
 
     iql = ImplicitQLearning(
         qf=TwinQ(obs_dim, act_dim, hidden_dim=256, n_hidden=2),
@@ -68,28 +66,55 @@ def main(args):
         beta=3.0,
         alpha=0.005,
         discount=0.99,
+        obs_converter=obs_converter
     )
 
     iql.load_state_dict(trained_model)
     if args.eval:
-        eval_policy()
+        result = eval_policy()
 
     if args.video:
         env = gym.make(env_name, non_zero_reset=args.videomultistart)
         print(env, type(env))
         obs = env.reset()
-        print(obs)
         fps = 30
         for run in range(5):
             writer = imageio.get_writer(f'{env_name}_good_run_{run}.mp4', format='FFMPEG', mode='I', fps=fps, quality=10)
             for _ in range(1000):
-                action = iql.policy.act(torch.tensor(obs, dtype=torch.float32).cuda().reshape(1, -1)).cpu().numpy()[0]
+                obs_torch = torch.tensor(obs, dtype=torch.float32).cuda().reshape(1, -1)
+                if args.polar:
+                    obs_torch = obs_converter(obs_torch)
+                action = iql.policy.act(obs_torch).cpu().numpy()[0]
                 obs, reward, done, info = env.step(action)
                 writer.append_data(env.render("rgb_array", width=1024, height=1024))
                 if done:
                     obs = env.reset()
                     break
             writer.close()
+
+    # separated because some servers can't render correctly
+    if args.savearr:
+        env = gym.make(env_name, non_zero_reset=args.multistart)
+        obs = env.reset()
+        for run in range(5):
+            observations = []
+            actions = []
+            for _ in range(1000):
+                obs_torch = torch.tensor(obs, dtype=torch.float32).cuda().reshape(1, -1)
+                if args.polar:
+                    obs_torch = obs_converter(obs_torch)
+                action = iql.policy.act(obs_torch).cpu().numpy()[0]
+                observations.append(obs)
+                actions.append(action)
+                obs, reward, done, info = env.step(action)
+                if done:
+                    obs = env.reset()
+                    break
+            np.save(f'{env_name}_good_run_{run}_obs.npy', np.array(observations))
+            np.save(f'{env_name}_good_run_{run}_act.npy', np.array(actions))
+
+    if args.eval:
+        return result
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -100,5 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--videomultistart', action='store_true')
     parser.add_argument('--multistart', action='store_true')
     parser.add_argument('--act', type=str, default='relu')
+    parser.add_argument('--savearr', action='store_true')
+    parser.add_argument('--polar', action='store_true')
     args = parser.parse_args()
     main(args)

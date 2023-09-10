@@ -13,6 +13,72 @@ import torch.nn as nn
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+class FittedFunction(nn.Module):
+    def __init__(self, fn, range_min, range_max, clamp=False):
+        super().__init__()
+        self.fn = fn
+        self.range_min = range_min
+        self.range_max = range_max
+        self.clamp = clamp
+
+    def forward(self, x):
+        if self.clamp:
+            x = torch.clamp(x, self.range_min, self.range_max)
+        return self.fn(x)
+    
+class FittedExponentialActivationg2TTT(FittedFunction):
+    def __init__(self, clamp=False):
+        def fn(x):
+            return 0.880456*torch.exp(-7.31405*x+0.499283)-1.45059
+        super().__init__(fn, -0.6, 0.0, clamp=clamp)
+
+class ReLULikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+    def __init__(self, clamp=False):
+        super().__init__()
+        self.clamp = clamp
+        self.act = FittedExponentialActivationg2TTT(clamp=clamp)
+
+    def forward(self, x):
+        return 1/60*(self.act(-0.1*x)+1.45059)
+
+class TanhLikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+    def __init__(self, clamp=False):
+        super().__init__()
+        self.clamp = clamp
+        self.act = FittedExponentialActivationg2TTT(clamp=clamp)
+
+    def forward(self, x):
+        return torch.sign(x)*(-1/60*self.act(torch.abs(x)-0.5) + 0.9125612803489692)
+    
+
+class ObservationConverter:
+    def __init__(self, target, max_distance):
+        self.target = target
+        self.max_distance = max_distance
+
+    def __call__(self, obs):
+        xy = obs[:, :2]
+        unit_vec = xy / torch.norm(xy, dim=1, keepdim=True)
+        magnitude = self.max_distance - torch.norm(xy - self.target, dim=1, keepdim=True)
+        normalized_magnitude = magnitude / self.max_distance
+        return torch.cat([unit_vec, normalized_magnitude, obs[:, 2:]], dim=1)
+    
+
+def get_obs_converter(env_name):
+    if env_name == 'antmaze-umaze-v2':
+        target = [0., 8.]
+        max_distance = 15.
+    elif env_name == 'antmaze-medium-play-v2':
+        target = [20., 20.]
+        max_distance = 30.
+    elif env_name == 'antmaze-large-play-v2':
+        target = [32., 24.]
+        max_distance = 41.
+    else:
+        raise NotImplementedError
+    obs_converter = ObservationConverter(torch.tensor(target).to(DEFAULT_DEVICE), max_distance)
+    return obs_converter
+
 
 class Squeeze(nn.Module):
     def __init__(self, dim=None):
@@ -86,12 +152,15 @@ def sample_batch(dataset, batch_size):
     return {k: v[indices] for k, v in dataset.items()}
 
 
-def evaluate_policy(env, policy, max_episode_steps, deterministic=True):
+def evaluate_policy(env, policy, max_episode_steps, deterministic=True, obs_converter=None):
     obs = env.reset()
     total_reward = 0.
     for _ in range(max_episode_steps):
         with torch.no_grad():
-            action = policy.act(torchify(obs), deterministic=deterministic).cpu().numpy()
+            obs = torchify(obs).reshape(1, -1)
+            if obs_converter is not None:
+                obs = obs_converter(obs)
+            action = policy.act(obs, deterministic=deterministic).cpu().numpy()[0]
         next_obs, reward, done, info = env.step(action)
         total_reward += reward
         if done:

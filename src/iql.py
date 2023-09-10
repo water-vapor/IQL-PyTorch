@@ -17,7 +17,7 @@ def asymmetric_l2_loss(u, tau):
 
 class ImplicitQLearning(nn.Module):
     def __init__(self, qf, vf, policy, optimizer_factory, max_steps,
-                 tau, beta, discount=0.99, alpha=0.005):
+                 tau, beta, discount=0.99, alpha=0.005, obs_converter=None):
         super().__init__()
         self.qf = qf.to(DEFAULT_DEVICE)
         self.q_target = copy.deepcopy(qf).requires_grad_(False).to(DEFAULT_DEVICE)
@@ -31,8 +31,12 @@ class ImplicitQLearning(nn.Module):
         self.beta = beta
         self.discount = discount
         self.alpha = alpha
+        self.obs_converter = obs_converter
 
     def update(self, observations, actions, next_observations, rewards, terminals):
+        if self.obs_converter is not None:
+            observations = self.obs_converter(observations)
+            next_observations = self.obs_converter(next_observations)
         with torch.no_grad():
             target_q = self.q_target(observations, actions)
             next_v = self.vf(next_observations)
