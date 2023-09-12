@@ -52,31 +52,51 @@ class TanhLikeRescaledFittedExponentialActivationg2TTT(nn.Module):
     
 
 class ObservationConverter:
-    def __init__(self, target, max_distance):
+    def __init__(self, target, max_distance, obs_type):
         self.target = target
         self.max_distance = max_distance
+        self.obs_type = obs_type
+        assert obs_type in ['cartesian', 'polar', 'cartesian_relative', 'polar2']
+        if self.obs_type == 'polar':
+            self.obs_size = 3
+        else:
+            self.obs_size = 2
 
     def __call__(self, obs):
         xy = obs[:, :2]
-        unit_vec = xy / torch.norm(xy, dim=1, keepdim=True)
-        magnitude = self.max_distance - torch.norm(xy - self.target, dim=1, keepdim=True)
-        normalized_magnitude = magnitude / self.max_distance
-        return torch.cat([unit_vec, normalized_magnitude, obs[:, 2:]], dim=1)
+        residue = obs[:, 2:]
+        if self.obs_type == 'cartesian':
+            return obs
+        elif self.obs_type == 'polar':
+            relative_xy = xy - self.target
+            unit_vec = relative_xy / torch.norm(relative_xy, dim=1, keepdim=True)
+            magnitude = self.max_distance - torch.norm(relative_xy, dim=1, keepdim=True)
+            normalized_magnitude = magnitude / self.max_distance
+            return torch.cat([unit_vec, normalized_magnitude, residue], dim=1)
+        elif self.obs_type == 'cartesian_relative':
+            relative_xy = xy - self.target
+            return torch.cat([relative_xy, residue], dim=1)
+        elif self.obs_type == 'polar2':
+            relative_xy = xy - self.target
+            angle = torch.atan2(relative_xy[:, 1], relative_xy[:, 0]).unsqueeze(1)
+            magnitude = self.max_distance - torch.norm(relative_xy, dim=1, keepdim=True)
+            normalized_magnitude = magnitude / self.max_distance
+            return torch.cat([angle, normalized_magnitude, residue], dim=1)
     
 
-def get_obs_converter(env_name):
-    if env_name == 'antmaze-umaze-v2':
+def get_obs_converter(env_name, obs_type, device=DEFAULT_DEVICE):
+    if env_name.startswith('antmaze-umaze'):
         target = [0., 8.]
         max_distance = 15.
-    elif env_name == 'antmaze-medium-play-v2':
+    elif env_name.startswith('antmaze-medium'):
         target = [20., 20.]
         max_distance = 30.
-    elif env_name == 'antmaze-large-play-v2':
+    elif env_name.startswith('antmaze-large'):
         target = [32., 24.]
         max_distance = 41.
     else:
         raise NotImplementedError
-    obs_converter = ObservationConverter(torch.tensor(target).to(DEFAULT_DEVICE), max_distance)
+    obs_converter = ObservationConverter(torch.tensor(target).to(device), max_distance, obs_type)
     return obs_converter
 
 

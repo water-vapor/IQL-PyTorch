@@ -35,18 +35,14 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
 def main(args):
     print(args)
     # torch.set_num_threads(1)
-    log = Log(Path(args.log_dir)/(f'{args.env_name}_{args.act}'+('_polar' if args.polar else '')), vars(args))
+    log = Log(Path(args.log_dir)/(f'{args.env_name}_{args.act}_{args.obs}'), vars(args))
     log(f'Log dir: {log.dir}')
 
-    if args.polar:
-        obs_converter = get_obs_converter(args.env_name)
-    else:
-        obs_converter = None
+    obs_converter = get_obs_converter(args.env_name, args.obs)
 
     env, dataset = get_env_and_dataset(log, args.env_name, args.max_episode_steps)
     obs_dim = dataset['observations'].shape[1]
-    if args.polar:
-        obs_dim += 1
+    obs_dim = (obs_dim - 2 + obs_converter.obs_size)
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
     print(f'obs_dim: {obs_dim}, act_dim: {act_dim}')
     set_seed(args.seed, env=env)
@@ -121,6 +117,6 @@ if __name__ == '__main__':
     parser.add_argument('--n-eval-episodes', type=int, default=10)
     parser.add_argument('--max-episode-steps', type=int, default=1000)
     parser.add_argument('--act', type=str, default='relu')
-    parser.add_argument('--polar', action='store_true')
+    parser.add_argument('--obs', type=str, choices=['cartesian', 'polar', 'polar2', 'cartesian_relative'], default='cartesian')
     parser.add_argument('--save-interval', type=int, default=100000)
     main(parser.parse_args())

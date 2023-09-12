@@ -22,10 +22,7 @@ def main(args):
     else:
         raise NotImplementedError
     
-    if args.polar:
-        obs_converter = get_obs_converter(args.env)
-    else:
-        obs_converter = None
+    obs_converter = get_obs_converter(args.env, args.obs)
     
     env_name = args.env
     pt_path = args.ckpt
@@ -41,8 +38,7 @@ def main(args):
         dataset[k] = torchify(v)
 
     obs_dim = dataset['observations'].shape[1]
-    if args.polar:
-        obs_dim += 1
+    obs_dim = (obs_dim - 2 + obs_converter.obs_size)
     act_dim = dataset['actions'].shape[1]
     print(f'obs_dim: {obs_dim}, act_dim: {act_dim}')
 
@@ -82,8 +78,7 @@ def main(args):
             writer = imageio.get_writer(f'{env_name}_good_run_{run}.mp4', format='FFMPEG', mode='I', fps=fps, quality=10)
             for _ in range(1000):
                 obs_torch = torch.tensor(obs, dtype=torch.float32).cuda().reshape(1, -1)
-                if args.polar:
-                    obs_torch = obs_converter(obs_torch)
+                obs_torch = obs_converter(obs_torch)
                 action = iql.policy.act(obs_torch).cpu().numpy()[0]
                 obs, reward, done, info = env.step(action)
                 writer.append_data(env.render("rgb_array", width=1024, height=1024))
@@ -101,8 +96,7 @@ def main(args):
             actions = []
             for _ in range(1000):
                 obs_torch = torch.tensor(obs, dtype=torch.float32).cuda().reshape(1, -1)
-                if args.polar:
-                    obs_torch = obs_converter(obs_torch)
+                obs_torch = obs_converter(obs_torch)
                 action = iql.policy.act(obs_torch).cpu().numpy()[0]
                 observations.append(obs)
                 actions.append(action)
@@ -126,6 +120,6 @@ if __name__ == '__main__':
     parser.add_argument('--multistart', action='store_true')
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--savearr', action='store_true')
-    parser.add_argument('--polar', action='store_true')
+    parser.add_argument('--obs', type=str, choices=['cartesian', 'polar', 'polar2', 'cartesian_relative'], default='cartesian')
     args = parser.parse_args()
     main(args)
