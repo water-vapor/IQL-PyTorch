@@ -10,7 +10,7 @@ from tqdm import trange
 from src.iql import ImplicitQLearning
 from src.policy import GaussianPolicy, DeterministicPolicy
 from src.value_functions import TwinQ, ValueFunction
-from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy, ReLULikeRescaledFittedExponentialActivationg2TTT, TanhLikeRescaledFittedExponentialActivationg2TTT, get_obs_converter
+from src.util import *
 
 
 
@@ -48,13 +48,19 @@ def main(args):
     set_seed(args.seed, env=env)
 
     if args.act == 'relu':
-        act = torch.nn.ReLU
+        act = torch.nn.ReLU()
     elif args.act == 'tanh':
-        act = torch.nn.Tanh
+        act = torch.nn.Tanh()
     elif args.act == 'fittedrelu':
-        act = ReLULikeRescaledFittedExponentialActivationg2TTT
+        act = ReLULikeRescaledFittedExponentialActivationg2TTT()
     elif args.act == 'fittedtanh':
-        act = TanhLikeRescaledFittedExponentialActivationg2TTT
+        act = TanhLikeRescaledFittedExponentialActivationg2TTT()
+    elif args.act == 'fittedelu':
+        act = ELULikeRescaledFittedExponentialActivationg2TTT()
+    elif args.act == 'fittedeluv2':
+        act = FittedELUActivationV2()
+    elif args.act == 'fittedsig':
+        act = FittedSigmoid2024Jan()
     else:
         raise NotImplementedError
 
@@ -106,17 +112,17 @@ if __name__ == '__main__':
     parser.add_argument('--discount', type=float, default=0.99)
     parser.add_argument('--hidden-dim', type=int, default=256)
     parser.add_argument('--n-hidden', type=int, default=2)
-    parser.add_argument('--n-steps', type=int, default=2*10**6)
+    parser.add_argument('--n-steps', type=int, default=10**6)
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--learning-rate', type=float, default=3e-4)
     parser.add_argument('--alpha', type=float, default=0.005)
     parser.add_argument('--tau', type=float, default=0.7)
     parser.add_argument('--beta', type=float, default=3.0)
     parser.add_argument('--deterministic-policy', action='store_true')
-    parser.add_argument('--eval-period', type=int, default=5000)
+    parser.add_argument('--eval-period', type=int, default=10000)
     parser.add_argument('--n-eval-episodes', type=int, default=10)
     parser.add_argument('--max-episode-steps', type=int, default=1000)
     parser.add_argument('--act', type=str, default='relu')
-    parser.add_argument('--obs', type=str, choices=['cartesian', 'polar', 'polar2', 'cartesian_relative'], default='cartesian')
+    parser.add_argument('--obs', type=str, default='cartesian')
     parser.add_argument('--save-interval', type=int, default=100000)
     main(parser.parse_args())

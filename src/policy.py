@@ -10,7 +10,7 @@ LOG_STD_MAX = 2.0
 
 
 class GaussianPolicy(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2, act=nn.ReLU):
+    def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2, act=nn.ReLU()):
         super().__init__()
         self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=act)
         self.log_std = nn.Parameter(torch.zeros(act_dim, dtype=torch.float32))
@@ -33,10 +33,10 @@ class GaussianPolicy(nn.Module):
 
 
 class DeterministicPolicy(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2, act=nn.ReLU):
+    def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2, act=nn.ReLU()):
         super().__init__()
         self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=act,
-                       output_activation=nn.Tanh)
+                       output_activation=nn.Tanh())
 
     def forward(self, obs):
         return self.net(obs)

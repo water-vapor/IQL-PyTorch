@@ -13,6 +13,25 @@ import torch.nn as nn
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
+class HistogramRecorder:
+    def __init__(self, min=-20, max=20):
+        super().__init__()
+        self.min = min
+        self.max = max
+        self.hist = torch.zeros(10*(self.max-self.min), dtype=torch.float32)
+
+    def record(self, x):
+        x = x.clone().detach().cpu()
+        _hist = torch.histogram(x, bins=10*(self.max-self.min), range=(self.min, self.max)).hist
+        self.hist += _hist
+
+    def print(self):
+        print(self.hist)
+
+    def reset(self):
+        self.hist = torch.zeros(10*(self.max-self.min), dtype=torch.float32)
+
 class FittedFunction(nn.Module):
     def __init__(self, fn, range_min, range_max, clamp=False):
         super().__init__()
@@ -26,29 +45,148 @@ class FittedFunction(nn.Module):
             x = torch.clamp(x, self.range_min, self.range_max)
         return self.fn(x)
     
+class ReLU(HistogramRecorder, nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        self.record(x)
+        return torch.relu(x)
+    
+class Tanh(HistogramRecorder, nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        self.record(x)
+        return torch.tanh(x)
+    
 class FittedExponentialActivationg2TTT(FittedFunction):
     def __init__(self, clamp=False):
         def fn(x):
             return 0.880456*torch.exp(-7.31405*x+0.499283)-1.45059
         super().__init__(fn, -0.6, 0.0, clamp=clamp)
 
-class ReLULikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+
+class FittedExponentialLinearActivation1010(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return torch.where(
+                x < -0.23,
+                -120.202*x-11.7279,
+                torch.where(
+                    x < 0.4,
+                    1.5889*torch.exp(0.567714-7.55103*x),
+                    torch.zeros_like(x, device=x.device)
+                )
+            )
+    
+class FittedExponentialLinearActivation1010Eval(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return torch.where(
+            x < -0.4,
+            torch.zeros_like(x, device=x.device),
+            torch.where(
+                x < -0.23,
+                -120.202*x-11.7279,
+                torch.where(
+                    x < 0.4,
+                    1.5889*torch.exp(0.567714-7.55103*x),
+                    torch.zeros_like(x, device=x.device)
+                )
+            )
+        )
+    
+class FittedELUActivationV2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.act = FittedExponentialLinearActivation1010()
+
+    def forward(self, x):
+        return 0.5*(self.act(-0.02*x)) - 1
+        # return (0.83*(self.act(-0.01*x-0.23)) - 13)/5
+
+        # this is good
+        # return torch.where(x<0, (0.83*(self.act(-0.01*x-0.23)) - 13)/5, (0.83*(self.act(-0.01*x-0.23)) - 13))
+    
+
+class FittedELUActivationV2Eval(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.act = FittedExponentialLinearActivation1010Eval()
+
+    def forward(self, x):
+        return 0.5*(self.act(-0.02*x)) - 1
+        # return 0.83*(self.act(-0.01*x-0.23)) - 13
+
+class ReLULikeRescaledFittedExponentialActivationg2TTT(HistogramRecorder, nn.Module):
     def __init__(self, clamp=False):
         super().__init__()
         self.clamp = clamp
         self.act = FittedExponentialActivationg2TTT(clamp=clamp)
 
     def forward(self, x):
+        self.record(x)
         return 1/60*(self.act(-0.1*x)+1.45059)
 
-class TanhLikeRescaledFittedExponentialActivationg2TTT(nn.Module):
+class TanhLikeRescaledFittedExponentialActivationg2TTT(HistogramRecorder, nn.Module):
     def __init__(self, clamp=False):
         super().__init__()
         self.clamp = clamp
         self.act = FittedExponentialActivationg2TTT(clamp=clamp)
 
     def forward(self, x):
+        self.record(x)
         return torch.sign(x)*(-1/60*self.act(torch.abs(x)-0.5) + 0.9125612803489692)
+
+class ELULikeRescaledFittedExponentialActivationg2TTT(HistogramRecorder, nn.Module):
+    def __init__(self, clamp=False):
+        super().__init__()
+        self.clamp = clamp
+        self.act = FittedExponentialActivationg2TTT(clamp=clamp)
+
+    def forward(self, x):
+        self.record(x)
+        # return torch.where(x >= 0, x, 
+        #                    torch.where(
+        #                        x <= -3.75,
+        #                        torch.zeros_like(x, device=x.device),
+        #                          0.01826361366142253*self.act(-0.13319443393572447*x-0.5)
+        #                    ))
+        return torch.where(x >= 0, x, 
+                           torch.where(
+                               x <= -3.75,
+                               torch.zeros_like(x, device=x.device) - 1,
+                                 0.01826361366142253*self.act(-0.13319443393572447*x-0.5) - 1
+                           ))
+    
+
+class StandardSigmoidFn(FittedFunction):
+    def __init__(self, clamp=False):
+        def fn(x):
+            return 1/(1+torch.exp(-x))
+        super().__init__(fn, -1., 1., clamp=clamp)
+    
+
+class FittedSigmoid2024JanFn(FittedFunction):
+    def __init__(self, clamp=False):
+        def fn(x):
+            return 1/(1+torch.exp(-12.55*(x-0.03)))
+        super().__init__(fn, -1., 1., clamp=clamp)
+    
+
+class FittedSigmoid2024Jan(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.act = FittedSigmoid2024JanFn(True)
+
+    def forward(self, x):
+        return self.act(0.5*x)#4 -0.407
     
 
 class ObservationConverter:
@@ -56,32 +194,41 @@ class ObservationConverter:
         self.target = target
         self.max_distance = max_distance
         self.obs_type = obs_type
-        assert obs_type in ['cartesian', 'polar', 'cartesian_relative', 'polar2']
         if self.obs_type == 'polar':
             self.obs_size = 3
+        elif self.obs_type == 'polar_prod':
+            self.obs_size = 5
+        elif self.obs_type == 'polar_prod2':
+            self.obs_size = 11
         else:
             self.obs_size = 2
 
     def __call__(self, obs):
         xy = obs[:, :2]
+        relative_xy = self.target - xy
         residue = obs[:, 2:]
         if self.obs_type == 'cartesian':
             return obs
         elif self.obs_type == 'polar':
-            relative_xy = xy - self.target
-            unit_vec = relative_xy / torch.norm(relative_xy, dim=1, keepdim=True)
-            magnitude = self.max_distance - torch.norm(relative_xy, dim=1, keepdim=True)
-            normalized_magnitude = magnitude / self.max_distance
+            magnitude = torch.norm(relative_xy, dim=1, keepdim=True)
+            unit_vec = relative_xy / magnitude
+            normalized_magnitude = 1 - magnitude / self.max_distance
             return torch.cat([unit_vec, normalized_magnitude, residue], dim=1)
+        elif self.obs_type == 'polar_prod':
+            magnitude = torch.norm(relative_xy, dim=1, keepdim=True)
+            unit_vec = relative_xy / magnitude
+            unit_vec_mag_prod = unit_vec * magnitude
+            normalized_magnitude = 1 - magnitude / self.max_distance
+            return torch.cat([unit_vec, normalized_magnitude, unit_vec_mag_prod, residue], dim=1)
         elif self.obs_type == 'cartesian_relative':
-            relative_xy = xy - self.target
             return torch.cat([relative_xy, residue], dim=1)
         elif self.obs_type == 'polar2':
-            relative_xy = xy - self.target
             angle = torch.atan2(relative_xy[:, 1], relative_xy[:, 0]).unsqueeze(1)
-            magnitude = self.max_distance - torch.norm(relative_xy, dim=1, keepdim=True)
-            normalized_magnitude = magnitude / self.max_distance
+            magnitude = torch.norm(relative_xy, dim=1, keepdim=True)
+            normalized_magnitude = 1 - magnitude / self.max_distance
             return torch.cat([angle, normalized_magnitude, residue], dim=1)
+        else:
+            raise NotImplementedError
     
 
 def get_obs_converter(env_name, obs_type, device=DEFAULT_DEVICE):
@@ -109,17 +256,20 @@ class Squeeze(nn.Module):
         return x.squeeze(dim=self.dim)
 
 
-def mlp(dims, activation=nn.ReLU, output_activation=None, squeeze_output=False):
+def mlp(dims, activation=nn.ReLU(), output_activation=None, squeeze_output=False):
     n_dims = len(dims)
     assert n_dims >= 2, 'MLP requires at least two dims (input and output)'
 
     layers = []
     for i in range(n_dims - 2):
         layers.append(nn.Linear(dims[i], dims[i+1]))
-        layers.append(activation())
+        if i == n_dims - 3:
+            layers.append(activation)
+        else:
+            layers.append(nn.ReLU())
     layers.append(nn.Linear(dims[-2], dims[-1]))
     if output_activation is not None:
-        layers.append(output_activation())
+        layers.append(output_activation)
     if squeeze_output:
         assert dims[-1] == 1
         layers.append(Squeeze(-1))
@@ -172,10 +322,10 @@ def sample_batch(dataset, batch_size):
     return {k: v[indices] for k, v in dataset.items()}
 
 
-def evaluate_policy(env, policy, max_episode_steps, deterministic=True, obs_converter=None):
+def evaluate_policy(env, policy, max_episode_steps, deterministic=True, obs_converter=None, return_steps=False):
     obs = env.reset()
     total_reward = 0.
-    for _ in range(max_episode_steps):
+    for s in range(max_episode_steps):
         with torch.no_grad():
             obs = torchify(obs).reshape(1, -1)
             if obs_converter is not None:
@@ -187,8 +337,13 @@ def evaluate_policy(env, policy, max_episode_steps, deterministic=True, obs_conv
             break
         else:
             obs = next_obs
-    return total_reward
-
+    if return_steps:
+        if s == max_episode_steps - 1:
+            return total_reward, -1
+        else:
+            return total_reward, s
+    else:
+        return total_reward
 
 def set_seed(seed, env=None):
     torch.manual_seed(seed)
