@@ -1,20 +1,6 @@
 # IQL-PyTorch for Stretchable Neuromorphic Array
 
-## Setup
-
-1. **Set up the environment**  
-   Create the required environment using Conda:
-   ```bash
-   conda env create -f environment.yml
-   ```
-
-2. **Install `D4RL` fork**  
-   Clone and install the custom `D4RL` repository:
-   ```bash
-   git clone https://github.com/water-vapor/D4RL.git
-   cd D4RL
-   pip install -e .
-   ```
+The environment is described in `environment.yml`, and you should also clone and install the custom `D4RL` fork from [this repository](https://github.com/water-vapor/D4RL).
 
 ## Training
 
